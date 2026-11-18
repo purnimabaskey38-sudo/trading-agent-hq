@@ -1,194 +1,225 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Trading Agent HQ</title>
-  <meta property="og:title" content="TRADING AGENT HQ — Nifty 500 & F&O Desk" />
-  <meta property="og:description" content="Live 3D Algorithmic Stock Scanner, Top 5 Stock & F&O Picks with Strike Price & Market Sentiment." />
-  <meta property="og:image" content="https://flaticon.com" />
-  <link rel="stylesheet" href="style.css" />
-  <link rel="manifest" href="manifest.json" />
-  <meta name="theme-color" content="#080d10" />
-  <script src="https://cloudflare.com"></script>
-  <script src="https://razorpay.com"></script>
-</head>
-<body>
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import json
+import urllib.request
+import xml.etree.ElementTree as ET
+from datetime import datetime
 
-  <!-- 1. PHONE & EMAIL OTP LOGIN SCREEN -->
-  <div id="login-screen" class="full-overlay">
-    <div class="auth-box">
-      <h2 style="color:#38bdf8; letter-spacing:1px;">TRADING AGENT HQ</h2>
-      <p style="color:#94a3b8; font-size:0.75rem; margin:6px 0 18px;">NIFTY 500 & F&O 3D DESK</p>
-      
-      <div style="display:flex; gap:8px; margin-bottom:15px;">
-        <button id="tab-phone" class="tab-btn active" onclick="switchAuthTab('phone')">Phone Number</button>
-        <button id="tab-email" class="tab-btn" onclick="switchAuthTab('email')">Email ID</button>
-      </div>
+STOCKS = [
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS",
+    "BHARTIARTL.NS", "SBIN.NS", "ITC.NS", "HINDUNILVR.NS", "LT.NS",
+    "BAJFINANCE.NS", "MARUTI.NS", "SUNPHARMA.NS", "M&M.NS", "TITAN.NS",
+    "TATAMOTORS.NS", "AXISBANK.NS", "ULTRACEMCO.NS", "NTPC.NS", "ADANIENT.NS",
+    "ADANIPORTS.NS", "ASIANPAINT.NS", "COALINDIA.NS", "WIPRO.NS", "ONGC.NS",
+    "BAJAJFINSV.NS", "JSWSTEEL.NS", "TATASTEEL.NS", "POWERGRID.NS", "HEROMOTOCO.NS"
+]
 
-      <div id="phone-box">
-        <input type="tel" id="phone-input" placeholder="+91 9876543210" class="auth-input" />
-      </div>
-      <div id="email-box" style="display:none;">
-        <input type="email" id="email-input" placeholder="you@example.com" class="auth-input" />
-      </div>
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.clip(lower=0).rolling(window=period).mean()
+    loss = -delta.clip(upper=0).rolling(window=period).mean()
+    rs = gain / loss.replace(0, np.nan)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(50)
 
-      <div id="recaptcha-container"></div>
-      <button id="send-otp-btn" class="primary-btn">SEND OTP</button>
+def calculate_atr(df, period=14):
+    high_low = df['High'] - df['Low']
+    high_close = (df['High'] - df['Close'].shift()).abs()
+    low_close = (df['Low'] - df['Close'].shift()).abs()
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = ranges.max(axis=1)
+    return true_range.rolling(window=period).mean().fillna(high_low)
 
-      <div id="otp-verify-box" style="display:none; margin-top:15px;">
-        <input type="text" id="otp-input" placeholder="Enter 6-digit OTP" maxlength="6" class="auth-input" style="text-align:center; letter-spacing:5px;" />
-        <button id="verify-otp-btn" class="primary-btn" style="background:#22c55e; margin-top:8px;">VERIFY & ENTER</button>
-      </div>
-      <p id="auth-msg" style="color:#f97316; font-size:0.75rem; margin-top:10px;"></p>
-    </div>
-  </div>
+def get_strike_price(price, signal):
+    if price < 500:
+        step = 5
+    elif price < 1000:
+        step = 10
+    elif price < 2500:
+        step = 20
+    elif price < 5000:
+        step = 50
+    else:
+        step = 100
+    atm_strike = round(price / step) * step
+    opt_type = "PE" if signal == "SELL" else "CE"
+    return f"{int(atm_strike)} {opt_type}"
 
-  <!-- 2. SILENT AUTO PAYMENT LOCK (????????? ?? ??? ?? ??? ??? ??? ??? ????) -->
-  <div id="payment-lock-modal" class="full-overlay" style="display:none;">
-    <div class="auth-box" style="border-color:#f97316;">
-      <h2 style="color:#f97316;">ACCESS EXPIRED</h2>
-      <p style="color:#cbd5e1; font-size:0.8rem; margin:12px 0;">
-        ????? ????????? ????? ??? ?????? ?????? ????????? ???? ???? ????? ??????? ??????? ?????
-      </p>
-      <div style="background:#131f26; padding:15px; border-radius:6px; margin-bottom:15px; border:1px solid #334155;">
-        <div style="font-size:1.6rem; font-weight:bold; color:#fff;" id="plan-price">?799</div>
-        <div style="font-size:0.75rem; color:#94a3b8;">Validity: 365 Days</div>
-      </div>
-      <button id="pay-now-btn" class="primary-btn" style="background:#f97316; color:#000;">PAY & UNLOCK NOW</button>
-    </div>
-  </div>
+def get_market_news():
+    feeds = [
+        ("GLOBAL NEWS", "https://google.com"),
+        ("NATIONAL NEWS", "https://google.com"),
+        ("INTERNATIONAL NEWS", "https://google.com"),
+        ("IMPORTANT NEWS", "https://google.com")
+    ]
+    news_list = []
+    for category, url in feeds:
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            xml_data = urllib.request.urlopen(req, timeout=5).read()
+            root = ET.fromstring(xml_data)
+            for item in root.findall('./channel/item')[:2]:
+                title_el = item.find('title')
+                if title_el is not None and title_el.text:
+                    clean_title = title_el.text.split(' - ')[0]
+                    news_list.append({"category": category, "headline": clean_title})
+        except Exception:
+            continue
+    if not news_list:
+        news_list = [
+            {"category": "NATIONAL NEWS", "headline": "Nifty 50 and Sensex live algorithmic market scan active."},
+            {"category": "GLOBAL NEWS", "headline": "Global indices tracking US Treasury yields and crude oil prices."}
+        ]
+    return news_list
 
-  <!-- 3. MAIN DASHBOARD -->
-  <div id="app-content" style="display:none;">
-    <header class="topbar">
-      <div>
-        <h1>TRADING AGENT HQ</h1>
-        <p class="subtitle">NIFTY 500 & F&O DESK · <span id="last-updated">LIVE</span></p>
-      </div>
-      
-      <!-- 3-DOT MENU (?) -->
-      <div class="menu-wrapper">
-        <button class="dots-btn" onclick="toggleMenu()">?</button>
-        <div id="dropdown-menu" class="dropdown-menu">
-          <div onclick="openModal('desc-modal')">Description</div>
-          <div onclick="openModal('strategy-modal')">Strategy Details</div>
-          <div onclick="triggerInstall()">Install App</div>
-          <div onclick="openModal('disclaimer-modal')">Disclaimer</div>
-          <div onclick="location.reload()">Refresh Data</div>
-          <div style="color:#ef4444;" onclick="logoutUser()">Logout</div>
-        </div>
-      </div>
-    </header>
+def fetch_index_data(symbol, fallback_price):
+    try:
+        df = yf.Ticker(symbol).history(period="5d")
+        if len(df) >= 2:
+            curr = float(df['Close'].iloc[-1])
+            prev = float(df['Close'].iloc[-2])
+            chg = ((curr - prev) / prev) * 100
+            return round(curr, 0), round(chg, 2)
+    except Exception:
+        pass
+    return fallback_price, 0.0
 
-    <!-- TOP MARKET BAR: NIFTY 50 | SENSEX | TODAY MARKET SENTIMENT -->
-    <section class="stats-bar">
-      <div class="pill">NIFTY 50 <span id="nifty-val">--</span></div>
-      <div class="pill">SENSEX <span id="sensex-val">--</span></div>
-      <div class="pill">SENTIMENT <span id="market-sentiment">--</span></div>
-    </section>
+def analyze_stocks():
+    results = []
+    advancers = 0
 
-    <!-- LIVE 3D ISOMETRIC TRADING OFFICE -->
-    <section class="card" style="padding:0; overflow:hidden; position:relative;">
-      <div id="office-3d-container" style="width:100%; height:290px; background:#070d12;"></div>
-      <div style="position:absolute; bottom:10px; left:12px; font-size:0.7rem; color:#38bdf8; background:rgba(8,13,16,0.85); padding:4px 8px; border-radius:4px; border:1px solid #1e293b;">
-        ? LIVE 3D DESK · 6 AGENTS ACTIVE
-      </div>
-    </section>
+    for ticker in STOCKS:
+        try:
+            df = yf.Ticker(ticker).history(period="1y")
+            if df is None or len(df) < 200:
+                continue
 
-    <!-- BUY NOW SINGLE PICK -->
-    <section class="card highlight-card">
-      <div class="card-header">? BUY NOW (SINGLE PICK)</div>
-      <div id="buy-now-box">Loading...</div>
-    </section>
+            close = df['Close']
+            volume = df['Volume']
 
-    <!-- SIX AGENTS FILTER CARDS -->
-    <section class="agents-grid">
-      <div class="agent-card" onclick="filterStocks('ALL')"><span class="dot orange"></span> <strong>ANALYST</strong> <small>RESEARCH LAB</small><p>Scans RSI extremes & trend health</p></div>
-      <div class="agent-card" onclick="filterStocks('MOVERS')"><span class="dot orange"></span> <strong>SCOUT</strong> <small>NEW MOVERS</small><p>Watches unusual volume & breakouts</p></div>
-      <div class="agent-card" onclick="filterStocks('EARLY')"><span class="dot cyan"></span> <strong>STRATEGIST</strong> <small>EARLY SETUPS</small><p>Stocks squeezing before the move</p></div>
-      <div class="agent-card" onclick="filterStocks('BUY')"><span class="dot green"></span> <strong>TRADER</strong> <small>EXECUTION DESK</small><p>Active BUY signals with SL & Targets</p></div>
-      <div class="agent-card" onclick="filterStocks('RISK')"><span class="dot red"></span> <strong>RISK OFFICER</strong> <small>RISK DESK</small><p>Stocks near 52-week low / high risk</p></div>
-      <div class="agent-card" onclick="filterStocks('SELL')"><span class="dot red"></span> <strong>WARDEN</strong> <small>BREADTH WATCH</small><p>Bearish & SELL score stocks</p></div>
-    </section>
+            curr_price = float(close.iloc[-1])
+            prev_price = float(close.iloc[-2])
+            day_change_pct = ((curr_price - prev_price) / prev_price) * 100
+            if day_change_pct > 0:
+                advancers += 1
 
-    <!-- TOP 5 STOCK PICKS (CASH) -->
-    <section class="card">
-      <div class="card-header">?? TOP 5 STOCK PICKS</div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>STOCK</th>
-              <th>SIGNAL</th>
-              <th>PRICE</th>
-              <th>STOPLOSS</th>
-              <th>TARGET 1</th>
-              <th>TARGET 2</th>
-            </tr>
-          </thead>
-          <tbody id="top5-stock-table"></tbody>
-        </table>
-      </div>
-    </section>
+            dma_50 = float(close.rolling(50).mean().iloc[-1])
+            dma_200 = float(close.rolling(200).mean().iloc[-1])
+            rsi = float(calculate_rsi(close, 14).iloc[-1])
+            atr = float(calculate_atr(df, 14).iloc[-1])
 
-    <!-- TOP 5 F&O PICKS WITH STRIKE PRICE -->
-    <section class="card">
-      <div class="card-header">?? TOP 5 F&O PICKS (WITH STRIKE PRICE)</div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>STOCK</th>
-              <th>STRIKE</th>
-              <th>SPOT</th>
-              <th>STOPLOSS</th>
-              <th>TARGET 1</th>
-              <th>TARGET 2</th>
-            </tr>
-          </thead>
-          <tbody id="fno-table"></tbody>
-        </table>
-      </div>
-    </section>
+            vol_avg_20 = float(volume.rolling(20).mean().iloc[-1])
+            curr_vol = float(volume.iloc[-1])
+            vol_ratio = curr_vol / vol_avg_20 if vol_avg_20 > 0 else 1.0
 
-    <!-- 5-SECOND AUTO ROTATING NEWS TICKER -->
-    <section class="card news-ticker-box">
-      <div style="display:flex; align-items:center; gap:10px;">
-        <span id="news-badge" class="news-badge">GLOBAL NEWS</span>
-        <p id="news-text" class="news-slide">Loading latest market headlines...</p>
-      </div>
-    </section>
+            score = 0
+            score += 1 if curr_price > dma_50 else -1
+            score += 1 if dma_50 > dma_200 else -1
+            if 45 <= rsi <= 68:
+                score += 1
+            elif rsi > 75:
+                score -= 1
+            if vol_ratio >= 1.5:
+                score += 1 if day_change_pct >= 0 else -1
 
-    <!-- ALL STOCKS BOARD -->
-    <section class="card">
-      <div class="card-header">
-        <span>ALL STOCKS BOARD (<span id="total-stocks">0</span>)</span>
-        <input type="text" id="search-input" placeholder="Search stock..." onkeyup="renderTable()" />
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>STOCK</th>
-              <th>SIGNAL</th>
-              <th>PRICE</th>
-              <th>RSI</th>
-              <th>STOPLOSS</th>
-              <th>TARGET 1</th>
-            </tr>
-          </thead>
-          <tbody id="stocks-table"></tbody>
-        </table>
-      </div>
-    </section>
-  </div>
+            signal = "BUY" if score >= 3 else ("SELL" if score <= -2 else "HOLD")
 
-  <!-- MODALS -->
-  <div id="desc-modal" class="modal"><div class="modal-content"><span class="close" onclick="closeModal('desc-modal')">&times;</span><h2>DESCRIPTION</h2><p style="font-size:0.8rem; color:#cbd5e1; margin-top:10px;">Trading Agent HQ scans Nifty 500 & F&O stocks using 6 specialized 3D algorithmic agents (Analyst, Scout, Strategist, Trader, Risk Officer, Warden) to find momentum pullbacks and breakouts.</p></div></div>
-  <div id="strategy-modal" class="modal"><div class="modal-content"><span class="close" onclick="closeModal('strategy-modal')">&times;</span><h2>STRATEGY DETAILS</h2><ul style="font-size:0.8rem; color:#cbd5e1; margin:10px 0 0 18px; line-height:1.6;"><li><strong>BUY:</strong> Score +3 or more | <strong>SELL:</strong> -2 or less.</li><li><strong>Stoploss:</strong> Entry - 1.5x ATR(14) (min 97% of 50 DMA).</li><li><strong>Targets:</strong> Target 1 is 1:2 Risk-Reward, Target 2 is 1:3.</li></ul></div></div>
-  <div id="disclaimer-modal" class="modal"><div class="modal-content"><span class="close" onclick="closeModal('disclaimer-modal')">&times;</span><h2>APP DISCLAIMER</h2><p class="warn-box">Trading Agent HQ is a learning and research tool. It does not give investment advice and is NOT a SEBI registered advisory service. Data comes from yfinance and can be delayed.</p></div></div>
+            entry = round(curr_price, 2)
+            raw_sl = entry - (1.5 * atr)
+            min_sl = 0.97 * dma_50
+            max_sl = entry - (0.75 * atr)
+            stoploss = round(min(max(raw_sl, min_sl), max_sl), 2)
+            if stoploss >= entry:
+                stoploss = round(entry * 0.97, 2)
 
-  <script type="module" src="app.js"></script>
-</body>
-</html>
+            risk = max(entry - stoploss, 0.5)
+            target_1 = round(entry + (2 * risk), 2)
+            target_2 = round(entry + (3 * risk), 2)
+            risk_pct = round((risk / entry) * 100, 2)
+
+            ret_5d = ((curr_price - float(close.iloc[-6])) / float(close.iloc[-6])) * 100
+            ret_1m = ((curr_price - float(close.iloc[-22])) / float(close.iloc[-22])) * 100
+            high_20d = float(df['High'].rolling(20).max().iloc[-1])
+            high_52w = float(df['High'].max())
+            low_52w = float(df['Low'].min())
+
+            early_points = 0
+            if ret_5d < 5 and ret_1m < 10 and day_change_pct < 4:
+                if curr_price > dma_200 and curr_price >= (0.97 * dma_50) and (38 <= rsi <= 65):
+                    bb_width = (4 * close.rolling(20).std()) / close.rolling(20).mean()
+                    curr_bb = float(bb_width.iloc[-1])
+                    bb_pct = (bb_width.tail(126) < curr_bb).mean() * 100
+                    if bb_pct <= 20:
+                        early_points += 2
+                    elif bb_pct <= 35:
+                        early_points += 1
+                    if curr_price >= 0.97 * high_20d:
+                        early_points += 1
+                    if curr_price >= 0.95 * high_52w:
+                        early_points += 1
+                    if vol_ratio >= 1.2 and day_change_pct >= 0:
+                        early_points += 1
+
+            is_early = early_points >= 3
+            buy_now_pts = score + early_points
+            if signal == "BUY" and is_early:
+                buy_now_pts += 2
+            if rsi > 68:
+                buy_now_pts -= 1
+            if ret_5d >= 8:
+                buy_now_pts -= 1
+            if risk_pct > 6:
+                buy_now_pts -= 1
+
+            results.append({
+                "symbol": ticker.replace(".NS", ""),
+                "price": entry,
+                "change_pct": round(day_change_pct, 2),
+                "rsi": round(rsi, 1),
+                "vol_ratio": round(vol_ratio, 2),
+                "score": score,
+                "signal": signal,
+                "strike": get_strike_price(entry, signal),
+                "stoploss": stoploss,
+                "risk_pct": risk_pct,
+                "target_1": target_1,
+                "target_2": target_2,
+                "is_early_setup": is_early,
+                "buy_now_points": buy_now_pts,
+                "near_52w_low": curr_price <= (low_52w * 1.10)
+            })
+        except Exception as e:
+            print(f"Skipping {ticker}: {e}")
+
+    nifty_price, nifty_chg = fetch_index_data("^NSEI", 24000)
+    sensex_price, sensex_chg = fetch_index_data("^BSESN", 79000)
+
+    adv_ratio = (advancers / len(results)) * 100 if results else 50
+    sentiment = "BULLISH" if adv_ratio >= 58 else ("BEARISH" if adv_ratio <= 42 else "NEUTRAL")
+
+    sorted_picks = sorted(results, key=lambda x: (x['buy_now_points'], -x['risk_pct']), reverse=True)
+    buy_now_pick = sorted_picks[0] if sorted_picks else None
+
+    output = {
+        "last_updated": datetime.now().strftime("%d %b %Y, %I:%M %p"),
+        "nifty": {"price": nifty_price, "change_pct": nifty_chg},
+        "sensex": {"price": sensex_price, "change_pct": sensex_chg},
+        "sentiment": sentiment,
+        "stats": {
+            "total_stocks": len(results),
+            "advancers": advancers,
+            "buy_count": sum(1 for x in results if x['signal'] == 'BUY'),
+            "sell_count": sum(1 for x in results if x['signal'] == 'SELL')
+        },
+        "buy_now": buy_now_pick,
+        "news": get_market_news(),
+        "stocks": results
+    }
+
+    with open("data.json", "w") as f:
+        json.dump(output, f, indent=2)
+    print("Successfully generated data.json")
+
+if __name__ == "__main__":
+    analyze_stocks()
