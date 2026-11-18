@@ -38,6 +38,7 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+          mv -f data.json "Trading Agent HQ/data.json" || true
           git add -A
           git commit -m "Auto update stock data" || echo "No changes to commit"
           git push
