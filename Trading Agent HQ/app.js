@@ -4,9 +4,12 @@ import { getFirestore, doc, getDoc, setDoc, updateDoc } from "https://gstatic.co
 
 // ????? ????? Firebase ?????????? ??????
 const firebaseConfig = {
-  apiKey: "YOUR_FIREBASE_API_KEY",
-  authDomain: "YOUR_://firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID"
+  apiKey: "AIzaSyBEJ-Gdo_nIsQ-0h6kOJZjg3ZxcHMrOJJk",
+  authDomain: "trading-agent-hq.firebaseapp.com",
+  projectId: "trading-agent-hq",
+  storageBucket: "trading-agent-hq.firebasestorage.app",
+  messagingSenderId: "707768472343",
+  appId: "1:707768472343:web:ccd67513c5f18c09649d52"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -209,7 +212,7 @@ async function loadMarketData() {
 
   if (data.buy_now) {
     const b = data.buy_now;
-    document.getElementById('buy-now-box').innerHTML = `<strong>${b.symbol}</strong> · Price: ?${b.price} | SL: ?${b.stoploss} (-${b.risk_pct}%) | T1: ?${b.target_1} | T2: ?${b.target_2}`;
+    document.getElementById('buy-now-box').innerHTML = `<strong>${b.symbol}</strong> Â· Price: ?${b.price} | SL: ?${b.stoploss} (-${b.risk_pct}%) | T1: ?${b.target_1} | T2: ?${b.target_2}`;
   }
 
   allStocks = data.stocks;
