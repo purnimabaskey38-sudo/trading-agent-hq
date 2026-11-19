@@ -1,0 +1,6 @@
+# This file lives in the site's base directory ("Trading Agent HQ").
+# Paths here are relative to that base directory, so "." publishes this folder.
+# Setting it here overrides the publish directory in the UI, which had been
+# resolving to "Trading Agent HQ/Trading Agent HQ" and failing the build.
+[build]
+  publish = "."
